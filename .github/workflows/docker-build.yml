@@ -409,14 +409,13 @@ jobs:
         run: |
           VERSION="${{ needs.check-version.outputs.version }}"
 
-          git tag "${VERSION}" ${{ github.sha }}
-          git push origin "${VERSION}"
 
           COMMIT_MSG=$(git log -1 --pretty=format:"%s")
           COMMIT_AUTHOR=$(git log -1 --pretty=format:"%an")
           COMMIT_DATE=$(git log -1 --pretty=format:"%ai")
 
           gh release create "${VERSION}" \
+            --target "${GITHUB_SHA}" \
             --title "Release ${VERSION}" \
             --notes "## Commit Information
           - **Message**: ${COMMIT_MSG}
