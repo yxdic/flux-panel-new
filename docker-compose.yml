@@ -25,14 +25,14 @@ services:
       retries: 10
 
   node-binary-init:
-    image: ghcr.io/yxdic/node-binary:2.1.28
+    image: ghcr.io/yxdic/node-binary:2.1.29-yxdic.1
     container_name: node-binary-init
     volumes:
       - node_binary:/data/node
     restart: "no"
 
   backend:
-    image: ghcr.io/yxdic/go-backend:2.1.28
+    image: ghcr.io/yxdic/go-backend:2.1.29-yxdic.1
     container_name: go-backend
     restart: unless-stopped
     environment:
@@ -65,7 +65,7 @@ services:
       start_period: 10s
 
   frontend:
-    image: ghcr.io/yxdic/nextjs-frontend:2.1.28
+    image: ghcr.io/yxdic/nextjs-frontend:2.1.29-yxdic.1
     container_name: nextjs-frontend
     restart: unless-stopped
     ports:
