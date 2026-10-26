@@ -1,0 +1,92 @@
+name: Import and customize Flux Panel
+on:
+  push:
+    paths:
+      - .github/workflows/bootstrap.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import:
+    if: github.repository == 'yxdic/flux-panel-new'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch upstream source
+        run: git clone --depth 1 https://github.com/0xNetuser/flux-panel.git /tmp/flux-upstream
+      - name: Import and customize
+        run: |
+          set -euo pipefail
+          cp -a /tmp/flux-upstream/. .
+          rm -rf .git
+          git init -b main
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root=Path('.')
+          for p in root.rglob('*'):
+              if not p.is_file() or '.git' in p.parts:
+                  continue
+              if p.suffix.lower() not in {'.yml','.yaml','.go','.sh','.md','.tsx','.ts','.json','.env','.txt'} and p.name not in {'Dockerfile','Dockerfile.binary'}:
+                  continue
+              try:
+                  s=p.read_text(encoding='utf-8')
+              except (UnicodeError,OSError):
+                  continue
+              t=s.replace('0xnetuser/', 'ghcr.io/yxdic/').replace('0xNetuser/flux-panel', 'yxdic/flux-panel-new')
+              if p.as_posix() in {'go-node/Dockerfile','go-node/Dockerfile.binary'}:
+                  t=t.replace('ARG XRAY_VERSION=25.1.30','ARG XRAY_VERSION=26.6.27')
+                  if p.name=='Dockerfile':
+                      t=t.replace('rm -rf /tmp/svc /tmp/svc.zip || true','rm -rf /tmp/svc /tmp/svc.zip')
+              if p.as_posix()=='.github/workflows/docker-build.yml':
+                  t=t.replace('name: Build and Push Images Based on Version','name: Build and Push Images Based on Version\n\npermissions:\n  contents: write\n  packages: write')
+                  t=t.replace('VERSION: "2.1.28"','VERSION: "2.1.29-yxdic.1"')
+                  t=t.replace('name: Log in to DockerHub','name: Log in to GitHub Container Registry')
+                  t=t.replace('docker/login-action@v2','docker/login-action@v3')
+                  t=t.replace('username: ${{ secrets.DOCKER_HUB_USERNAME }}','registry: ghcr.io\n          username: ${{ github.actor }}')
+                  t=t.replace('password: ${{ secrets.DOCKER_HUB_TOKEN }}','password: ${{ secrets.GITHUB_TOKEN }}')
+              if p.as_posix()=='nextjs-frontend/app/(auth)/node/page.tsx':
+                  marker="  const hasGroups = useMemo(() => nodes.some(n => n.groupName && n.groupName.length > 0), [nodes]);"
+                  assert marker in t, 'Group marker missing'
+                  t=t.replace(marker,marker+"\n  const availableGroups = useMemo(() => Array.from(new Set(nodes.map(n => String(n.groupName || '').trim()).filter(Boolean))).sort(), [nodes]);")
+                  old="<Input value={form.groupName} onChange={e => setForm(p => ({ ...p, groupName: e.target.value }))} placeholder={t('node.groupNamePlaceholder')} />"
+                  assert old in t, 'Group input missing'
+                  t=t.replace(old, """<Input list="existing-node-groups" value={form.groupName} onChange={e => setForm(p => ({ ...p, groupName: e.target.value }))} placeholder={t('node.groupNamePlaceholder')} />
+              <datalist id="existing-node-groups">
+                {availableGroups.map(group => <option key={group} value={group} />)}
+              </datalist>""")
+              if p.as_posix()=='nextjs-frontend/app/(auth)/forward/page.tsx':
+                  a=t.index('  const loadLatency = useCallback(')
+                  b=t.index('\n  }, []);',a)+len('\n  }, []);')
+                  t=t[:a]+"""  const loadLatency = useCallback(async (fwds: any[]) => {
+    const active = fwds.filter((f: any) => f.status === 1);
+    if (active.length === 0) { setLatencyMap({}); return; }
+    const results = await Promise.all(active.map(async (f: any) => {
+      try {
+        const res = await getLatencyHistory(f.id, 1);
+        if (res.code === 0 && Array.isArray(res.data) && res.data.length > 0) {
+          const records = res.data as Array<{ recordTime: number; latency: number; success: boolean }>;
+          const latestTime = Math.max(...records.map(r => r.recordTime));
+          const latestRound = records.filter(r => r.recordTime === latestTime);
+          const reachable = latestRound.filter(r => r.success && Number.isFinite(r.latency) && r.latency >= 0);
+          const best = reachable.sort((a, b) => a.latency - b.latency)[0];
+          return { id: f.id, value: { latency: best?.latency ?? -1, success: !!best } };
+        }
+      } catch {}
+      return { id: f.id, value: null };
+    }));
+    const map: Record<number, { latency: number; success: boolean } | null> = {};
+    for (const r of results) map[r.id] = r.value;
+    setLatencyMap(map);
+  }, []);"""+t[b:]
+              if t!=s:
+                  p.write_text(t,encoding='utf-8')
+          assert '26.6.27' in (root/'go-node/Dockerfile').read_text()
+          assert 'ghcr.io/yxdic/node' in (root/'docker-compose-node.yml').read_text()
+          assert 'registry: ghcr.io' in (root/'.github/workflows/docker-build.yml').read_text()
+          print('Source import and customization checks passed')
+          PY
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Import upstream Flux Panel with personal GHCR and fixes"
+          git push origin HEAD:main --force
