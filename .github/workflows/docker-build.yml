@@ -4,6 +4,10 @@ permissions:
   contents: write
   packages: write
 
+concurrency:
+  group: flux-panel-new-release
+  cancel-in-progress: true
+
 # 在这里定义统一版本号
 env:
   VERSION: "2.1.29-yxdic.1"
