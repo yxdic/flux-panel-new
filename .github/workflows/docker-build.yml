@@ -224,12 +224,13 @@ jobs:
         run: |
           VERSION="${{ needs.check-version.outputs.version }}"
           docker buildx build \
+            --label org.opencontainers.image.source=https://github.com/yxdic/flux-panel-new \
             --platform linux/amd64,linux/arm64 \
             --push \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
-            -t ghcr.io/yxdic/nextjs-frontend:latest \
-            -t ghcr.io/yxdic/nextjs-frontend:${VERSION} \
+            -t ghcr.io/yxdic/flux-panel-new-frontend:latest \
+            -t ghcr.io/yxdic/flux-panel-new-frontend:${VERSION} \
             ./nextjs-frontend
 
   build-go-backend:
@@ -266,12 +267,13 @@ jobs:
         run: |
           VERSION="${{ needs.check-version.outputs.version }}"
           docker buildx build \
+            --label org.opencontainers.image.source=https://github.com/yxdic/flux-panel-new \
             --platform linux/amd64,linux/arm64 \
             --push \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
-            -t ghcr.io/yxdic/go-backend:latest \
-            -t ghcr.io/yxdic/go-backend:${VERSION} \
+            -t ghcr.io/yxdic/flux-panel-new-backend:latest \
+            -t ghcr.io/yxdic/flux-panel-new-backend:${VERSION} \
             ./go-backend
 
   build-node-image:
@@ -308,14 +310,15 @@ jobs:
         run: |
           VERSION="${{ needs.check-version.outputs.version }}"
           docker buildx build \
+            --label org.opencontainers.image.source=https://github.com/yxdic/flux-panel-new \
             --platform linux/amd64,linux/arm64 \
             --push \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
-            -t ghcr.io/yxdic/node:latest \
-            -t ghcr.io/yxdic/node:${VERSION} \
-            -t ghcr.io/yxdic/gost-node:latest \
-            -t ghcr.io/yxdic/gost-node:${VERSION} \
+            -t ghcr.io/yxdic/flux-panel-new-node:latest \
+            -t ghcr.io/yxdic/flux-panel-new-node:${VERSION} \
+            -t ghcr.io/yxdic/flux-panel-new-gost-node:latest \
+            -t ghcr.io/yxdic/flux-panel-new-gost-node:${VERSION} \
             -f go-node/Dockerfile \
             ./go-node
 
@@ -353,14 +356,15 @@ jobs:
         run: |
           VERSION="${{ needs.check-version.outputs.version }}"
           docker buildx build \
+            --label org.opencontainers.image.source=https://github.com/yxdic/flux-panel-new \
             --platform linux/amd64,linux/arm64 \
             --push \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
-            -t ghcr.io/yxdic/node-binary:latest \
-            -t ghcr.io/yxdic/node-binary:${VERSION} \
-            -t ghcr.io/yxdic/gost-binary:latest \
-            -t ghcr.io/yxdic/gost-binary:${VERSION} \
+            -t ghcr.io/yxdic/flux-panel-new-node-binary:latest \
+            -t ghcr.io/yxdic/flux-panel-new-node-binary:${VERSION} \
+            -t ghcr.io/yxdic/flux-panel-new-gost-binary:latest \
+            -t ghcr.io/yxdic/flux-panel-new-gost-binary:${VERSION} \
             -f go-node/Dockerfile.binary \
             ./go-node
 
