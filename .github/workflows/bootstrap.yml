@@ -60,26 +60,26 @@ jobs:
                   a=t.index('  const loadLatency = useCallback(')
                   b=t.index('\n  }, []);',a)+len('\n  }, []);')
                   t=t[:a]+"""  const loadLatency = useCallback(async (fwds: any[]) => {
-    const active = fwds.filter((f: any) => f.status === 1);
-    if (active.length === 0) { setLatencyMap({}); return; }
-    const results = await Promise.all(active.map(async (f: any) => {
-      try {
-        const res = await getLatencyHistory(f.id, 1);
-        if (res.code === 0 && Array.isArray(res.data) && res.data.length > 0) {
+              const active = fwds.filter((f: any) => f.status === 1);
+              if (active.length === 0) { setLatencyMap({}); return; }
+              const results = await Promise.all(active.map(async (f: any) => {
+                try {
+                  const res = await getLatencyHistory(f.id, 1);
+                  if (res.code === 0 && Array.isArray(res.data) && res.data.length > 0) {
           const records = res.data as Array<{ recordTime: number; latency: number; success: boolean }>;
           const latestTime = Math.max(...records.map(r => r.recordTime));
           const latestRound = records.filter(r => r.recordTime === latestTime);
           const reachable = latestRound.filter(r => r.success && Number.isFinite(r.latency) && r.latency >= 0);
           const best = reachable.sort((a, b) => a.latency - b.latency)[0];
           return { id: f.id, value: { latency: best?.latency ?? -1, success: !!best } };
-        }
-      } catch {}
-      return { id: f.id, value: null };
-    }));
-    const map: Record<number, { latency: number; success: boolean } | null> = {};
-    for (const r of results) map[r.id] = r.value;
-    setLatencyMap(map);
-  }, []);"""+t[b:]
+                  }
+                } catch {}
+                return { id: f.id, value: null };
+              }));
+              const map: Record<number, { latency: number; success: boolean } | null> = {};
+              for (const r of results) map[r.id] = r.value;
+              setLatencyMap(map);
+            }, []);"""+t[b:]
               if t!=s:
                   p.write_text(t,encoding='utf-8')
           assert '26.6.27' in (root/'go-node/Dockerfile').read_text()
