@@ -1,6 +1,6 @@
 services:
   flux-node:
-    image: ghcr.io/yxdic/node:latest
+    image: ghcr.io/yxdic/flux-panel-new-node:latest
     container_name: flux-node
     network_mode: host
     restart: unless-stopped
