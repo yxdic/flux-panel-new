@@ -111,7 +111,7 @@ systemctl restart docker
 docker run -d --network=host --restart=unless-stopped --name flux-node \
   -e PANEL_ADDR=http://<panel-ip>:<panel-port> \
   -e SECRET=<node-secret> \
-  ghcr.io/yxdic/node:latest
+  ghcr.io/yxdic/flux-panel-new-node:latest
 ```
 
 ### Script (systemd service)
