@@ -17,16 +17,13 @@ jobs:
       - name: Import and customize
         run: |
           set -euo pipefail
-          cp -a /tmp/flux-upstream/. .
-          rm -rf .git
-          git init -b main
-          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          tar -C /tmp/flux-upstream --exclude=.git --exclude=.github/workflows -cf - . | tar -xf -
           python3 - <<'PY'
           from pathlib import Path
           import re
           root=Path('.')
           for p in root.rglob('*'):
-              if not p.is_file() or '.git' in p.parts:
+              if not p.is_file() or '.git' in p.parts or (len(p.parts)>1 and p.parts[0]=='.github' and p.parts[1]=='workflows'):
                   continue
               if p.suffix.lower() not in {'.yml','.yaml','.go','.sh','.md','.tsx','.ts','.json','.env','.txt'} and p.name not in {'Dockerfile','Dockerfile.binary'}:
                   continue
@@ -84,9 +81,8 @@ jobs:
                   p.write_text(t,encoding='utf-8')
           assert '26.6.27' in (root/'go-node/Dockerfile').read_text()
           assert 'ghcr.io/yxdic/node' in (root/'docker-compose-node.yml').read_text()
-          assert 'registry: ghcr.io' in (root/'.github/workflows/docker-build.yml').read_text()
           print('Source import and customization checks passed')
           PY
           git add -A
           git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Import upstream Flux Panel with personal GHCR and fixes"
-          git push origin HEAD:main --force
+          git push origin HEAD:main
