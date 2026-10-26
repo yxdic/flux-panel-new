@@ -1,0 +1,471 @@
+name: Build and Push Images Based on Version
+
+permissions:
+  contents: write
+  packages: write
+
+# 在这里定义统一版本号
+env:
+  VERSION: "2.1.29-yxdic.1"
+
+on:
+  push:
+    branches:
+      - main
+      - beta
+
+jobs:
+  check-version:
+    name: Check Version and Decide Build
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ env.VERSION }}
+      should_build: ${{ steps.check-tag.outputs.should_build }}
+      should_build_node: ${{ steps.check-tag.outputs.should_build_node }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Display version
+        run: |
+          echo "Current version: ${{ env.VERSION }}"
+
+      - name: Check if tag exists and detect changes
+        id: check-tag
+        run: |
+          if git rev-parse "${{ env.VERSION }}" >/dev/null 2>&1; then
+            echo "Tag ${{ env.VERSION }} already exists"
+            echo "tag_exists=true" >> $GITHUB_OUTPUT
+            echo "should_build=false" >> $GITHUB_OUTPUT
+
+            TAG_COMMIT=$(git rev-list -n 1 "${{ env.VERSION }}")
+            echo "Tag commit: $TAG_COMMIT"
+            echo "Current HEAD: $(git rev-parse HEAD)"
+
+            if git diff --quiet --ignore-all-space --ignore-blank-lines $TAG_COMMIT HEAD -- go-node/ 2>/dev/null; then
+              echo "✅ Node files unchanged since tag (no content changes)"
+              echo "should_build_node=false" >> $GITHUB_OUTPUT
+            else
+              echo "🔄 Detected changes in go-node directory:"
+              git diff --stat $TAG_COMMIT HEAD -- go-node/ || true
+              echo "should_build_node=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "Tag ${{ env.VERSION }} does not exist, will build all components"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "should_build_node=true" >> $GITHUB_OUTPUT
+            echo "tag_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ============================================================
+  # Build stage — compile on host, avoid QEMU emulation
+  # ============================================================
+
+  build-node:
+    name: Build & Compress Node Binary
+    needs: check-version
+    if: needs.check-version.outputs.should_build_node == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-node-${{ hashFiles('go-node/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-node-
+
+      - name: Install UPX
+        run: |
+          wget -q https://github.com/upx/upx/releases/download/v4.2.1/upx-4.2.1-amd64_linux.tar.xz
+          tar -xf upx-4.2.1-amd64_linux.tar.xz
+          sudo mv upx-4.2.1-amd64_linux/upx /usr/local/bin/
+          rm -rf upx-4.2.1-amd64_linux*
+
+      - name: Build node binary (AMD64)
+        working-directory: ./go-node
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.nodeVersion=${{ env.VERSION }}" -o node-amd64
+
+      - name: Build node binary (ARM64)
+        working-directory: ./go-node
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.nodeVersion=${{ env.VERSION }}" -o node-arm64
+
+      - name: Compress with UPX (AMD64)
+        working-directory: ./go-node
+        run: upx --best --lzma node-amd64
+
+      - name: Compress with UPX (ARM64)
+        working-directory: ./go-node
+        run: upx --best --lzma node-arm64
+
+      - name: Upload Node AMD64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-binary-amd64
+          path: ./go-node/node-amd64
+
+      - name: Upload Node ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-binary-arm64
+          path: ./go-node/node-arm64
+
+  build-go-backend-binary:
+    name: Build Go Backend Binary
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-backend-${{ hashFiles('go-backend/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-backend-
+
+      - name: Build go-backend (AMD64)
+        working-directory: ./go-backend
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X flux-panel/go-backend/pkg.Version=${{ env.VERSION }}" -o app-amd64
+
+      - name: Build go-backend (ARM64)
+        working-directory: ./go-backend
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X flux-panel/go-backend/pkg.Version=${{ env.VERSION }}" -o app-arm64
+
+      - name: Upload go-backend AMD64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-backend-amd64
+          path: ./go-backend/app-amd64
+
+      - name: Upload go-backend ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-backend-arm64
+          path: ./go-backend/app-arm64
+
+  build-nextjs:
+    name: Build Next.js Static Output
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: nextjs-frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./nextjs-frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: ./nextjs-frontend
+        run: npm run build
+
+      - name: Upload static output
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextjs-out
+          path: ./nextjs-frontend/out
+
+  # ============================================================
+  # Docker image build stage — COPY only, no compilation
+  # ============================================================
+
+  build-nextjs-frontend:
+    name: Build & Push Next.js Frontend
+    needs: [check-version, build-nextjs]
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download Next.js build output
+        uses: actions/download-artifact@v4
+        with:
+          name: nextjs-out
+          path: ./nextjs-frontend/out
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Next.js Frontend Docker images
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --push \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            -t ghcr.io/yxdic/nextjs-frontend:latest \
+            -t ghcr.io/yxdic/nextjs-frontend:${VERSION} \
+            ./nextjs-frontend
+
+  build-go-backend:
+    name: Build & Push Go Backend
+    needs: [check-version, build-go-backend-binary]
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download go-backend AMD64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: go-backend-amd64
+          path: ./go-backend
+
+      - name: Download go-backend ARM64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: go-backend-arm64
+          path: ./go-backend
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Go Backend Docker images
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --push \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            -t ghcr.io/yxdic/go-backend:latest \
+            -t ghcr.io/yxdic/go-backend:${VERSION} \
+            ./go-backend
+
+  build-node-image:
+    name: Build & Push Node Image
+    needs: [check-version, build-node]
+    if: needs.check-version.outputs.should_build_node == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download Node AMD64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: node-binary-amd64
+          path: ./go-node
+
+      - name: Download Node ARM64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: node-binary-arm64
+          path: ./go-node
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Node Docker images
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --push \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            -t ghcr.io/yxdic/node:latest \
+            -t ghcr.io/yxdic/node:${VERSION} \
+            -t ghcr.io/yxdic/gost-node:latest \
+            -t ghcr.io/yxdic/gost-node:${VERSION} \
+            -f go-node/Dockerfile \
+            ./go-node
+
+  build-node-binary:
+    name: Build & Push Node Binary Image
+    needs: [check-version, build-node]
+    if: needs.check-version.outputs.should_build_node == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download Node AMD64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: node-binary-amd64
+          path: ./go-node
+
+      - name: Download Node ARM64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: node-binary-arm64
+          path: ./go-node
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Node Binary Docker images
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --push \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            -t ghcr.io/yxdic/node-binary:latest \
+            -t ghcr.io/yxdic/node-binary:${VERSION} \
+            -t ghcr.io/yxdic/gost-binary:latest \
+            -t ghcr.io/yxdic/gost-binary:${VERSION} \
+            -f go-node/Dockerfile.binary \
+            ./go-node
+
+  # ============================================================
+  # Release stage
+  # ============================================================
+
+  create-release:
+    name: Create Release and Tag
+    needs: [check-version, build-node, build-node-image, build-node-binary, build-nextjs-frontend, build-go-backend]
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download Node AMD64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: node-binary-amd64
+          path: ./artifacts/amd64
+
+      - name: Download Node ARM64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: node-binary-arm64
+          path: ./artifacts/arm64
+
+      - name: Rename binaries
+        run: |
+          mv ./artifacts/amd64/node-amd64 ./artifacts/node-amd64
+          mv ./artifacts/arm64/node-arm64 ./artifacts/node-arm64
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+
+          git tag "${VERSION}" ${{ github.sha }}
+          git push origin "${VERSION}"
+
+          COMMIT_MSG=$(git log -1 --pretty=format:"%s")
+          COMMIT_AUTHOR=$(git log -1 --pretty=format:"%an")
+          COMMIT_DATE=$(git log -1 --pretty=format:"%ai")
+
+          gh release create "${VERSION}" \
+            --title "Release ${VERSION}" \
+            --notes "## Commit Information
+          - **Message**: ${COMMIT_MSG}
+          - **Author**: ${COMMIT_AUTHOR}
+          - **Date**: ${COMMIT_DATE}
+          - **Commit**: [\`${GITHUB_SHA:0:7}\`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})" \
+            --repo ${{ github.repository }}
+
+          echo "Uploading node binaries..."
+          gh release upload "${VERSION}" ./artifacts/node-amd64 --clobber
+          gh release upload "${VERSION}" ./artifacts/node-arm64 --clobber
+
+          echo "Uploading install scripts..."
+          gh release upload "${VERSION}" ./install.sh --clobber
+          gh release upload "${VERSION}" ./panel_install.sh --clobber
+
+          echo "Uploading Docker Compose config..."
+          gh release upload "${VERSION}" ./docker-compose.yml --clobber
+
+          echo "All files uploaded to Release ${VERSION}"
+
+  update-release-node:
+    name: Update Node Binaries in Release
+    needs: [check-version, build-node]
+    if: needs.check-version.outputs.should_build == 'false' && needs.check-version.outputs.should_build_node == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Download Node AMD64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: node-binary-amd64
+          path: ./artifacts/amd64
+
+      - name: Download Node ARM64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: node-binary-arm64
+          path: ./artifacts/arm64
+
+      - name: Rename binaries
+        run: |
+          mv ./artifacts/amd64/node-amd64 ./artifacts/node-amd64
+          mv ./artifacts/arm64/node-arm64 ./artifacts/node-arm64
+
+      - name: Update Node binaries in Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ needs.check-version.outputs.version }}"
+
+          echo "Updating Release ${VERSION} node binaries..."
+
+          gh release upload "${VERSION}" ./artifacts/node-amd64 --clobber
+          gh release upload "${VERSION}" ./artifacts/node-arm64 --clobber
+
+          echo "Node binaries updated!"
